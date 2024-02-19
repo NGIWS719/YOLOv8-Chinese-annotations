@@ -109,35 +109,52 @@ def replicate(im, labels):
 
 
 def letterbox(im, new_shape=(640, 640), color=(114, 114, 114), auto=True, scaleFill=False, scaleup=True, stride=32):
-    # Resize and pad image while meeting stride-multiple constraints
-    shape = im.shape[:2]  # current shape [height, width]
+    # 将图像缩放到指定的新尺寸（new_shape），在图像周围添加边框
+    shape = im.shape[:2]  # 赋值 [height, width]
+    # 如果直传一个int，则返回元组如下
     if isinstance(new_shape, int):
         new_shape = (new_shape, new_shape)
 
     # Scale ratio (new / old)
+    # 新尺寸和原始尺寸的最小比值
     r = min(new_shape[0] / shape[0], new_shape[1] / shape[1])
     if not scaleup:  # only scale down, do not scale up (for better val mAP)
+        # r不会大于1，这就意味着，图像的尺寸只会被缩小，不会被放大
         r = min(r, 1.0)
 
-    # Compute padding
-    ratio = r, r  # width, height ratios
+    # 计算padding
+    ratio = r, r  # 定义这个元组表示的是图像宽度和高度的缩放比例
+    # 根据缩放比例r计算了图像缩放后的宽度和高度
     new_unpad = int(round(shape[1] * r)), int(round(shape[0] * r))
+    # 根据目标尺寸new_shape和缩放后的尺寸new_unpad计算了需要添加的边框的宽度dw和高度dh
+    # dw是目标宽度减去缩放后的宽度，dh是目标高度减去缩放后的高度
     dw, dh = new_shape[1] - new_unpad[0], new_shape[0] - new_unpad[1]  # wh padding
+    # 如果auto参数为True，那么边框的大小会被调整为stride的倍数
     if auto:  # minimum rectangle
+        # 这两个表达式计算的是dw和dh除以stride的余数，在卷积神经网络中，输入的尺寸通常需要是卷积核大小或者步长的倍数
         dw, dh = np.mod(dw, stride), np.mod(dh, stride)  # wh padding
     elif scaleFill:  # stretch
+        # 设置需要添加的边框宽度为0
         dw, dh = 0.0, 0.0
+        # 直接用目标宽高度进行赋值缩放后的宽高度，考虑长宽比，直接图像拉伸或者压缩到指定的尺寸
         new_unpad = (new_shape[1], new_shape[0])
+        # 宽高的比例
         ratio = new_shape[1] / shape[1], new_shape[0] / shape[0]  # width, height ratios
 
+    # 将边框的大小分为两部分，一部分添加到图像的左边和上边，另一部分添加到图像的右边和下边，确保图像在添加边框后，仍然保持在中心位置
     dw /= 2  # divide padding into 2 sides
     dh /= 2
 
+    # 反转后的原始尺寸是否等于缩放后的尺寸
     if shape[::-1] != new_unpad:  # resize
+        # 进行缩放（线性插值法）
         im = cv2.resize(im, new_unpad, interpolation=cv2.INTER_LINEAR)
+    # 需要添加到图像上边和下边的边框的大小top和bottom，以及左边和右边的边框的大小left和right
     top, bottom = int(round(dh - 0.1)), int(round(dh + 0.1))
     left, right = int(round(dw - 0.1)), int(round(dw + 0.1))
+    # 添加边框，边框的类型是常数边框cv2.BORDER_CONSTANT，边框的颜色是color
     im = cv2.copyMakeBorder(im, top, bottom, left, right, cv2.BORDER_CONSTANT, value=color)  # add border
+    # 返回调整后的图像im，以及缩放比例ratio和边框的大小(dw, dh)
     return im, ratio, (dw, dh)
 
 

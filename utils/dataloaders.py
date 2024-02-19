@@ -236,75 +236,91 @@ class LoadScreenshots:
 
 
 class LoadImages:
-    # YOLOv5 image/video dataloader, i.e. `python detect.py --source image.jpg/vid.mp4`
+    # 图片或视频数据加载, 例. `python detect.py --source image.jpg/vid.mp4`
     def __init__(self, path, img_size=640, stride=32, auto=True, transforms=None, vid_stride=1):
         files = []
+        # 如果path是元组或列表,则直接遍历,若path不是则把path变为列表再遍历
         for p in sorted(path) if isinstance(path, (list, tuple)) else [path]:
+            # 将p转换为一个Path对象，然后调用resolve方法获取p的绝对路径，最后将这个路径转换为字符串
             p = str(Path(p).resolve())
+            # 如果p中包含通配符 *，那么就使用glob.glob函数获取所有匹配p的文件，然后将这些文件添加到files列表中
             if '*' in p:
                 files.extend(sorted(glob.glob(p, recursive=True)))  # glob
+            # 如果p是一个目录，那么就使用glob.glob函数获取这个目录下的所有文件，然后将这些文件添加到files列表中
             elif os.path.isdir(p):
                 files.extend(sorted(glob.glob(os.path.join(p, '*.*'))))  # dir
+            # 如果p是一个文件，那么就将p添加到files列表中
             elif os.path.isfile(p):
                 files.append(p)  # files
             else:
                 raise FileNotFoundError(f'{p} does not exist')
 
+        # 如果path的后缀名转小写在图片后缀列表中,就把它遍历到images列表中
         images = [x for x in files if x.split('.')[-1].lower() in IMG_FORMATS]
+        # 如果path的后缀名转小写在视频后缀列表中, 就把它遍历到videos列表中
         videos = [x for x in files if x.split('.')[-1].lower() in VID_FORMATS]
+        # 赋值两个列表长度
         ni, nv = len(images), len(videos)
 
         self.img_size = img_size
         self.stride = stride
-        self.files = images + videos
-        self.nf = ni + nv  # number of files
-        self.video_flag = [False] * ni + [True] * nv
+        self.files = images + videos  # 将图片和视频列表进行拼接
+        self.nf = ni + nv  # 视频和图片列表总长度
+        self.video_flag = [False] * ni + [True] * nv  # 视频在总列表的对应位置打标记
         self.mode = 'image'
         self.auto = auto
         self.transforms = transforms  # optional
-        self.vid_stride = vid_stride  # video frame-rate stride
+        self.vid_stride = vid_stride  # 视频帧率步长
         if any(videos):
-            self._new_video(videos[0])  # new video
+            self._new_video(videos[0])  # 从新的视频文件中读取帧
         else:
             self.cap = None
         assert self.nf > 0, f'No images or videos found in {p}. ' \
                             f'Supported formats are:\nimages: {IMG_FORMATS}\nvideos: {VID_FORMATS}'
 
     def __iter__(self):
-        self.count = 0
+        self.count = 0  # 初始化
         return self
 
     def __next__(self):
+        # 如果等于，那么就表示所有的文件都已经处理过了
         if self.count == self.nf:
             raise StopIteration
-        path = self.files[self.count]
+        path = self.files[self.count]  # 获取当前文件的路径path
 
+        # 如果文件是视频
         if self.video_flag[self.count]:
             # Read video
             self.mode = 'video'
             for _ in range(self.vid_stride):
                 self.cap.grab()
-            ret_val, im0 = self.cap.retrieve()
+            ret_val, im0 = self.cap.retrieve()  # 读取帧
+            # 如果无法读取帧，那么就释放当前的视频捕获对象
             while not ret_val:
                 self.count += 1
                 self.cap.release()
                 if self.count == self.nf:  # last video
                     raise StopIteration
-                path = self.files[self.count]
-                self._new_video(path)
-                ret_val, im0 = self.cap.read()
+                path = self.files[self.count]  # 获取当前文件
+                self._new_video(path)  # 创建新的视频捕获对象
+                ret_val, im0 = self.cap.read()  # 读帧
 
-            self.frame += 1
+            self.frame += 1  # 帧数加一
             # im0 = self._cv2_rotate(im0)  # for use if cv2 autorotation is False
             s = f'video {self.count + 1}/{self.nf} ({self.frame}/{self.frames}) {path}: '
 
         else:
-            # Read image
+            # 读取图片
             self.count += 1
-            im0 = cv2.imread(path)  # BGR
+            im0 = cv2.imread(path)  # BGR  读取图片
             assert im0 is not None, f'Image Not Found {path}'
             s = f'image {self.count}/{self.nf} {path}: '
 
+        """
+        如果self.transforms不为None，那么就调用self.transforms函数进行处理；
+        否则，就使用letterbox函数进行处理，然后将图像的形状从HWC（Height, Width, Channel）转换为CHW（Channel, Height, Width），
+        并将BGR图像转换为RGB图像，最后确保这个数组是连续的
+        """
         if self.transforms:
             im = self.transforms(im0)  # transforms
         else:
@@ -312,87 +328,121 @@ class LoadImages:
             im = im.transpose((2, 0, 1))[::-1]  # HWC to CHW, BGR to RGB
             im = np.ascontiguousarray(im)  # contiguous
 
+        # 返回一个元组，包含了当前文件的路径，处理后的图像，原始图像，视频捕获对象，以及一些描述信息
         return path, im, im0, self.cap, s
 
     def _new_video(self, path):
-        # Create a new video capture object
-        self.frame = 0
+        # 创建一个新的视频捕获对象
+        self.frame = 0  # 初始化帧数为0
+        # 用于从视频文件中读取帧
         self.cap = cv2.VideoCapture(path)
+        # 使用cv2.VideoCapture.get获取视频的总帧数，然后除以帧率步长self.vid_stride，得到需要读取的帧的数量
         self.frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT) / self.vid_stride)
+        # 获取视频的旋转角度
         self.orientation = int(self.cap.get(cv2.CAP_PROP_ORIENTATION_META))  # rotation degrees
         # self.cap.set(cv2.CAP_PROP_ORIENTATION_AUTO, 0)  # disable https://github.com/ultralytics/yolov5/issues/8493
 
     def _cv2_rotate(self, im):
-        # Rotate a cv2 video manually
+        # 旋转图像
         if self.orientation == 0:
+            # 顺时针旋转90度
             return cv2.rotate(im, cv2.ROTATE_90_CLOCKWISE)
         elif self.orientation == 180:
+            # 逆时针旋转90度
             return cv2.rotate(im, cv2.ROTATE_90_COUNTERCLOCKWISE)
         elif self.orientation == 90:
+            # 旋转180度
             return cv2.rotate(im, cv2.ROTATE_180)
+        # 返回原始图像
         return im
 
     def __len__(self):
-        return self.nf  # number of files
+        return self.nf  # 总列表中的文件数目
 
 
+# 加载视频流数据
 class LoadStreams:
-    # YOLOv5 streamloader, i.e. `python detect.py --source 'rtsp://example.com/media.mp4'  # RTSP, RTMP, HTTP streams`
+    # YOLOv5 streamloader, 例 `python detect.py --source 'rtsp://example.com/media.mp4'  # RTSP,RTMP,HTTP视频流`
     def __init__(self, sources='streams.txt', img_size=640, stride=32, auto=True, transforms=None, vid_stride=1):
+        # 启用cuDNN的自动优化器，可以让程序自动寻找最适合当前配置的高效算法，从而使得计算更快
         torch.backends.cudnn.benchmark = True  # faster for fixed-size inference
-        self.mode = 'stream'
+        self.mode = 'stream'  # 设置视频流模式标志
         self.img_size = img_size
         self.stride = stride
-        self.vid_stride = vid_stride  # video frame-rate stride
+        self.vid_stride = vid_stride  # 视频帧率步长
+        # 如果资源路径是一个文件，会被分割成多个部分，其实每个部分就是一个单独的视频流来源，如果资源路径不是文件则本身就是一个视频流
         sources = Path(sources).read_text().rsplit() if os.path.isfile(sources) else [sources]
+        # 视频流列表长度
         n = len(sources)
+        # 特殊字符替换为下划线,为了避免后续处理中可能由于特殊字符引起的问题
         self.sources = [clean_str(x) for x in sources]  # clean source names for later
+        # 给以下变量进行赋初值
         self.imgs, self.fps, self.frames, self.threads = [None] * n, [0] * n, [0] * n, [None] * n
-        for i, s in enumerate(sources):  # index, source
-            # Start thread to read frames from video stream
+        for i, s in enumerate(sources):  # 遍历资源路径
+            # 开线程取读视频流中的帧
             st = f'{i + 1}/{n}: {s}... '
-            if urlparse(s).hostname in ('www.youtube.com', 'youtube.com', 'youtu.be'):  # if source is YouTube video
+            if urlparse(s).hostname in ('www.youtube.com', 'youtube.com', 'youtu.be'):  # 如果视频流来源于YouTube
                 # YouTube format i.e. 'https://www.youtube.com/watch?v=Zgi9g1ksQHc' or 'https://youtu.be/Zgi9g1ksQHc'
                 check_requirements(('pafy', 'youtube_dl==2020.12.2'))
                 import pafy
+                # 获取YouTube视频的最佳版本的URL
                 s = pafy.new(s).getbest(preftype="mp4").url  # YouTube URL
-            s = eval(s) if s.isnumeric() else s  # i.e. s = '0' local webcam
+            # 如果资源的值为数字，则是过去本地摄像头的
+            s = eval(s) if s.isnumeric() else s  # 例 s = '0' local webcam
             if s == 0:
                 assert not is_colab(), '--source 0 webcam unsupported on Colab. Rerun command in a local environment.'
                 assert not is_kaggle(), '--source 0 webcam unsupported on Kaggle. Rerun command in a local environment.'
+            # 获取本地摄像头
             cap = cv2.VideoCapture(s)
             assert cap.isOpened(), f'{st}Failed to open {s}'
+            # 获取摄像头的分辨率宽高、帧率
             w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             fps = cap.get(cv2.CAP_PROP_FPS)  # warning: may return 0 or nan
+            # 为了在无法获取正确的帧数时，仍然能够正确处理视频流
+            """
+            如果获取到的帧数是一个非负整数，那么就使用这个帧数；如果获取到的帧数是负数，那么就使用0
+            然后，如果帧数是0（可能是因为无法从流中获取帧数，或者获取到的帧数是负数），那么就使用float('inf')，表示这是一个无限的流
+            """
             self.frames[i] = max(int(cap.get(cv2.CAP_PROP_FRAME_COUNT)), 0) or float('inf')  # infinite stream fallback
+            """
+            如果获取到的帧率是一个有限数，那么就使用这个帧率；如果获取到的帧率是无穷大或者非数（NaN），那么就使用0
+            然后，如果帧率是0（可能是因为无法从流中获取帧率，或者获取到的帧率是无穷大或者非数），那么就使用30，表示默认的帧率是30FPS
+            """
             self.fps[i] = max((fps if math.isfinite(fps) else 0) % 100, 0) or 30  # 30 FPS fallback
-
+            # 获取视频流cap的第一帧
             _, self.imgs[i] = cap.read()  # guarantee first frame
+            # 定义一个守护线程执行的任务是self.update，传参[i, cap, s]
             self.threads[i] = Thread(target=self.update, args=([i, cap, s]), daemon=True)
             LOGGER.info(f"{st} Success ({self.frames[i]} frames {w}x{h} at {self.fps[i]:.2f} FPS)")
+            # 开启线程
             self.threads[i].start()
         LOGGER.info('')  # newline
 
-        # check for common shapes
+        # 将每一帧图像调整到img_size大小，并保证调整后的图像的长宽比不变，获取第一个返回值（调整后的图像），然后堆叠起来
         s = np.stack([letterbox(x, img_size, stride=stride, auto=auto)[0].shape for x in self.imgs])
+        # 找出数组s中的唯一形状，然后检查这些唯一形状的数量是否为1
         self.rect = np.unique(s, axis=0).shape[0] == 1  # rect inference if all shapes equal
         self.auto = auto and self.rect
+        # 对图像进行预处理
         self.transforms = transforms  # optional
         if not self.rect:
             LOGGER.warning('WARNING ⚠️ Stream shapes differ. For optimal performance supply similarly-shaped streams.')
 
     def update(self, i, cap, stream):
-        # Read stream `i` frames in daemon thread
-        n, f = 0, self.frames[i]  # frame number, frame array
+        # 守护线读取视频流第i帧
+        n, f = 0, self.frames[i]  # 帧数，帧数组
+        # 视频流正常打开，并且未读取完所有帧
         while cap.isOpened() and n < f:
-            n += 1
+            n += 1  # 计数
+            # 抓取一帧
             cap.grab()  # .read() = .grab() followed by .retrieve()
             if n % self.vid_stride == 0:
-                success, im = cap.retrieve()
+                # 是否成功获取到帧，以及获取到的所有帧
+                success, im = cap.retrieve()  # 获取抓取的帧
                 if success:
                     self.imgs[i] = im
-                else:
+                else:  # 如果没有成功获取到帧，那么就警告视频流无响应，并尝试重新打开视频流
                     LOGGER.warning('WARNING ⚠️ Video stream unresponsive, please check your IP camera connection.')
                     self.imgs[i] = np.zeros_like(self.imgs[i])
                     cap.open(stream)  # re-open stream if signal was lost
@@ -404,18 +454,25 @@ class LoadStreams:
 
     def __next__(self):
         self.count += 1
+        # 如果有任何一个线程已经停止，就会返回False或按q键
         if not all(x.is_alive() for x in self.threads) or cv2.waitKey(1) == ord('q'):  # q to quit
+            # 销毁窗口
             cv2.destroyAllWindows()
             raise StopIteration
 
+        # im0列表中的每个元素都是一帧图像
         im0 = self.imgs.copy()
         if self.transforms:
+            # 对im0列表中的每一帧图像调用self.transforms函数进行处理
             im = np.stack([self.transforms(x) for x in im0])  # transforms
         else:
+            # 对im0中的每一帧图像调用letterbox进行处理
             im = np.stack([letterbox(x, self.img_size, stride=self.stride, auto=self.auto)[0] for x in im0])  # resize
+            # 将BGR图像转换为RGB图像，并将图像的形状从BHWC转换为BCHW
             im = im[..., ::-1].transpose((0, 3, 1, 2))  # BGR to RGB, BHWC to BCHW
+            # 确保这个数组是连续的
             im = np.ascontiguousarray(im)  # contiguous
-
+        # 返回视频流的来源、处理后的图像im、原始图像im0，以及两个None
         return self.sources, im, im0, None, ''
 
     def __len__(self):

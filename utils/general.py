@@ -163,18 +163,23 @@ CONFIG_DIR = user_config_dir()  # Ultralytics settings dir
 class Profile(contextlib.ContextDecorator):
     # YOLOv5 Profile class. Usage: @Profile() decorator or 'with Profile():' context manager
     def __init__(self, t=0.0):
+        # 接受一个参数t，表示的是累计的时间。同时，也检查是否有可用的CUDA设备
         self.t = t
         self.cuda = torch.cuda.is_available()
 
     def __enter__(self):
+        # 这个方法在进入with语句的代码块时被调用。它记录了当前的时间作为开始时间
         self.start = self.time()
         return self
 
     def __exit__(self, type, value, traceback):
+        # 这个方法在退出with语句的代码块时被调用。它计算了从开始时间到现在的时间差，然后将这个时间差累加到t上
         self.dt = self.time() - self.start  # delta-time
         self.t += self.dt  # accumulate dt
 
     def time(self):
+        # 这个方法返回当前的时间。如果有可用的CUDA设备，
+        # 那么它会先调用torch.cuda.synchronize等待所有CUDA设备完成当前的任务，然后返回当前的时间
         if self.cuda:
             torch.cuda.synchronize()
         return time.time()
@@ -689,7 +694,7 @@ def make_divisible(x, divisor):
 
 
 def clean_str(s):
-    # Cleans a string by replacing special characters with underscore _
+    # 清洗字符串将s中的特殊字符替换成"_“
     return re.sub(pattern="[|@#!¡·$€%&()=?¿^*;:,¨´><+]", repl="_", string=s)
 
 
