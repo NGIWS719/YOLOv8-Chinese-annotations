@@ -70,42 +70,69 @@ def check_pil_font(font=FONT, size=10):
 
 class Annotator:
     # YOLOv5 Annotator for train/val mosaics and jpgs and detect/hub inference annotations
+    #  接收参数图片、字体大小、字体名称、是否使用PIL库等
     def __init__(self, im, line_width=None, font_size=None, font='Arial.ttf', pil=False, example='abc'):
         assert im.data.contiguous, 'Image not contiguous. Apply np.ascontiguousarray(im) to Annotator() input images.'
+        # 检查example是否只包含ASCII字符
         non_ascii = not is_ascii(example)  # non-latin labels, i.e. asian, arabic, cyrillic
         self.pil = pil or non_ascii
+        # 使用了pil库
         if self.pil:  # use PIL
+            # 如果im已经是一个Image对象，那么就直接使用im,否则，就使用Image.fromarray将im转换为一个Image对象
             self.im = im if isinstance(im, Image.Image) else Image.fromarray(im)
+            # 创建一个ImageDraw对象，用于在图像上绘制图形和文本
             self.draw = ImageDraw.Draw(self.im)
+            # 检查并获取字体。如果non_ascii为True，那么就使用Arial.Unicode.ttf字体，这个字体支持非ASCII字符；
+            # 否则，就使用输入参数font指定的字体。字体的大小是输入参数font_size或者根据图像的尺寸计算的结果
             self.font = check_pil_font(font='Arial.Unicode.ttf' if non_ascii else font,
                                        size=font_size or max(round(sum(self.im.size) / 2 * 0.035), 12))
+        # 使用了opencv
         else:  # use cv2
-            self.im = im
+            self.im = im  # 直接使用输入的图像im
+        """
+        计算线宽.如果输入参数line_width不为None，那么就使用line_width作为线宽；
+        否则，就根据图像的尺寸计算线宽。计算的公式是sum(im.shape) / 2 * 0.003，然后四舍五入到最近的整数，最后取和2的较大值
+        """
         self.lw = line_width or max(round(sum(im.shape) / 2 * 0.003), 2)  # line width
 
     def box_label(self, box, label='', color=(128, 128, 128), txt_color=(255, 255, 255)):
-        # Add one xyxy box to image with label
-        if self.pil or not is_ascii(label):
-            self.draw.rectangle(box, width=self.lw, outline=color)  # box
+        # 在图像上画框和标签
+        if self.pil or not is_ascii(label):  # 如果使用PIL库或者标签包含非ASCII字符
+            self.draw.rectangle(box, width=self.lw, outline=color)  # 画框框
+            # 如果标签不为空
             if label:
+                # 获取标签的宽度w和高度h
                 w, h = self.font.getsize(label)  # text width, height
+                # 检查标签是否可以放在边界框的外面,如果边界框的上边缘减去标签的高度大于等于0，那么就表示标签可以放在边界框的外面
                 outside = box[1] - h >= 0  # label fits outside box
+                # 在图像上绘制一个填充的矩形，这个矩形的位置和大小根据outside的值决定。
+                # 如果outside为True，那么就在边界框的上方绘制矩形；否则，就在边界框的内部绘制矩形
                 self.draw.rectangle(
                     (box[0], box[1] - h if outside else box[1], box[0] + w + 1,
                      box[1] + 1 if outside else box[1] + h + 1),
                     fill=color,
                 )
                 # self.draw.text((box[0], box[1]), label, fill=txt_color, font=self.font, anchor='ls')  # for PIL>8.0
+                # 在图像上添加标签。标签的位置根据outside的值决定，和上面绘制矩形的逻辑是一样的
                 self.draw.text((box[0], box[1] - h if outside else box[1]), label, fill=txt_color, font=self.font)
-        else:  # cv2
+        else:  # opencv
+            # 获取边界框的左上角和右下角的坐标，然后将它们转换为整数
             p1, p2 = (int(box[0]), int(box[1])), (int(box[2]), int(box[3]))
+            # 在图像上绘制边界框
             cv2.rectangle(self.im, p1, p2, color, thickness=self.lw, lineType=cv2.LINE_AA)
+            # 如果标签不为空
             if label:
-                tf = max(self.lw - 1, 1)  # font thickness
+                tf = max(self.lw - 1, 1)  # 计算字体的厚度,字体的厚度是线宽减1和1的较大值
+                # 获取标签的宽度和高度
                 w, h = cv2.getTextSize(label, 0, fontScale=self.lw / 3, thickness=tf)[0]  # text width, height
+                # 检查标签是否可以放在边界框的外面。
+                # 如果边界框的上边缘减去标签的高度大于等于3，那么就表示标签可以放在边界框的外面，outside就为True；否则，outside就为False
                 outside = p1[1] - h >= 3
+                # 计算填充矩形的右下角的坐标。如果outside为True，那么就在边界框的上方计算坐标；否则，就在边界框的内部计算坐标
                 p2 = p1[0] + w, p1[1] - h - 3 if outside else p1[1] + h + 3
+                # 在图像上绘制一个填充的矩形。这个矩形的左上角的坐标是p1，右下角的坐标是p2，颜色是color
                 cv2.rectangle(self.im, p1, p2, color, -1, cv2.LINE_AA)  # filled
+                # 在图像上添加标签。标签的位置根据outside的值决定，和上面绘制矩形的逻辑是一样的。标签的颜色是txt_color，字体的厚度是tf
                 cv2.putText(self.im,
                             label, (p1[0], p1[1] - 2 if outside else p1[1] + h + 2),
                             0,
@@ -123,9 +150,9 @@ class Annotator:
             alpha (float): mask transparency: 0.0 fully transparent, 1.0 opaque
         """
         if self.pil:
-            # convert to numpy first
+            # 转换为NumPy数组
             self.im = np.asarray(self.im).copy()
-        if im_gpu is None:
+        if im_gpu is None:  # 没有gpu
             # Add multiple masks of shape(h,w,n) with colors list([r,g,b], [r,g,b], ...)
             if len(masks) == 0:
                 return
@@ -161,11 +188,11 @@ class Annotator:
             self.fromarray(self.im)
 
     def rectangle(self, xy, fill=None, outline=None, width=1):
-        # Add rectangle to image (PIL-only)
+        # 图像上添加一个矩形。这个函数只能在使用PIL库时使用
         self.draw.rectangle(xy, fill, outline, width)
 
     def text(self, xy, text, txt_color=(255, 255, 255), anchor='top'):
-        # Add text to image (PIL-only)
+        # 在图像上添加文本。这个函数只能在使用PIL库时使用
         if anchor == 'bottom':  # start y from font bottom
             w, h = self.font.getsize(text)  # text width, height
             xy[1] += 1 - h

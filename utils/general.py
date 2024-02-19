@@ -63,12 +63,13 @@ os.environ['OMP_NUM_THREADS'] = '1' if platform.system() == 'darwin' else str(NU
 def is_ascii(s=''):
     # Is string composed of all ASCII (no UTF) characters? (note str().isascii() introduced in python 3.7)
     s = str(s)  # convert list, tuple, None, etc. to str
+    # 这行代码首先将字符串s编码为字节序列，然后尝试使用ASCII编码解码这个字节序列,如果两者相等，那么就表示原始字符串只包含ASCII字符
     return len(s.encode().decode('ascii', 'ignore')) == len(s)
 
 
 def is_chinese(s='人工智能'):
-    # Is string composed of any Chinese characters?
-    return bool(re.search('[\u4e00-\u9fff]', str(s)))
+    # 检查输入字符串s是否包含任何中文字符
+    return bool(re.search('[\u4e00-\u9fff]', str(s)))  # 正则表达式检查字符串是否包含中文字符
 
 
 def is_colab():
