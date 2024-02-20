@@ -37,36 +37,51 @@ from utils.torch_utils import copy_attr, smart_inference_mode
 def autopad(k, p=None, d=1):  # kernel, padding, dilation
     # 计算卷积或池化操作的自动填充大小
     # Pad to 'same' shape outputs
-    if d > 1:
+    if d > 1:  # 如果膨胀率d大于1，那么就计算实际的核大小
         k = d * (k - 1) + 1 if isinstance(k, int) else [d * (x - 1) + 1 for x in k]  # actual kernel-size
-    if p is None:
+    if p is None:  # 如果填充大小p为None，那么就计算自动填充大小
         p = k // 2 if isinstance(k, int) else [x // 2 for x in k]  # auto-pad
     return p
 
 
+# 卷积
 class Conv(nn.Module):
     # Standard convolution with args(ch_in, ch_out, kernel, stride, padding, groups, dilation, activation)
-    default_act = nn.SiLU()  # default activation
+    default_act = nn.SiLU()  # 设置默认激活函数
 
+    # 定义初始化方法,输入通道数c1，输出通道数c2，卷积核大小k，步长s，填充大小p，分组数g，膨胀率d，以及激活函数act
     def __init__(self, c1, c2, k=1, s=1, p=None, g=1, d=1, act=True):
         super().__init__()
+        # 创建了一个二维卷积层,
         self.conv = nn.Conv2d(c1, c2, k, s, autopad(k, p, d), groups=g, dilation=d, bias=False)
+        # 批量归一化层,通过对每一批数据进行归一化，使得输出的均值接近0，标准差接近1，从而使得网络的训练更加稳定，同时也能加速网络的训练
         self.bn = nn.BatchNorm2d(c2)
+        """
+        如果act为True，那么就使用默认的激活函数self.default_act
+        如果act是一个nn.Module对象，那么就使用act
+        否则，就使用nn.Identity，这是一个恒等映射，也就是不进行任何操作
+        """
         self.act = self.default_act if act is True else act if isinstance(act, nn.Module) else nn.Identity()
 
+    # 下面两个前向传播的方法
     def forward(self, x):
+        # 对x卷积->批量归一化->激活函数->输出
         return self.act(self.bn(self.conv(x)))
 
     def forward_fuse(self, x):
+        # 对x卷积->激活函数->输出
         return self.act(self.conv(x))
 
 
+# 深度可分离卷积层(将标准的卷积操作分解为深度卷积和点卷积两步，从而减少计算量和模型参数)
 class DWConv(Conv):
     # Depth-wise convolution
     def __init__(self, c1, c2, k=1, s=1, d=1, act=True):  # ch_in, ch_out, kernel, stride, dilation, activation
+        # 调用父类的初始化方法创建一个深度可分离卷积层;这里，分组数g被设置为输入通道数和输出通道数的最大公约数
         super().__init__(c1, c2, k, s, g=math.gcd(c1, c2), d=d, act=act)
 
 
+# 深度可分离的转置卷积层
 class DWConvTranspose2d(nn.ConvTranspose2d):
     # Depth-wise transpose convolution
     def __init__(self, c1, c2, k=1, s=1, p1=0, p2=0):  # ch_in, ch_out, kernel, stride, padding, padding_out
@@ -77,13 +92,14 @@ class TransformerLayer(nn.Module):
     # Transformer layer https://arxiv.org/abs/2010.11929 (LayerNorm layers removed for better performance)
     def __init__(self, c, num_heads):
         super().__init__()
-        self.q = nn.Linear(c, c, bias=False)
+        self.q = nn.Linear(c, c, bias=False)  # 线性层
         self.k = nn.Linear(c, c, bias=False)
         self.v = nn.Linear(c, c, bias=False)
-        self.ma = nn.MultiheadAttention(embed_dim=c, num_heads=num_heads)
+        self.ma = nn.MultiheadAttention(embed_dim=c, num_heads=num_heads)  # 多头注意力层
         self.fc1 = nn.Linear(c, c, bias=False)
         self.fc2 = nn.Linear(c, c, bias=False)
 
+    # 前向传播
     def forward(self, x):
         x = self.ma(self.q(x), self.k(x), self.v(x))[0] + x
         x = self.fc2(self.fc1(x)) + x
@@ -113,11 +129,12 @@ class Bottleneck(nn.Module):
     # Standard bottleneck
     def __init__(self, c1, c2, shortcut=True, g=1, e=0.5):  # ch_in, ch_out, shortcut, groups, expansion
         super().__init__()
-        c_ = int(c2 * e)  # hidden channels
-        self.cv1 = Conv(c1, c_, 1, 1)
-        self.cv2 = Conv(c_, c2, 3, 1, g=g)
+        c_ = int(c2 * e)  # hidden channels  隐藏层的通道数
+        self.cv1 = Conv(c1, c_, 1, 1)  # 第一个卷积层的输入通道数是c1，输出通道数是c_，卷积核大小是1，步长是1
+        self.cv2 = Conv(c_, c2, 3, 1, g=g)  # 第二个卷积层的输入通道数是c_，输出通道数是c2，卷积核大小是3，步长是1，分组数是g
         self.add = shortcut and c1 == c2
 
+    # 前向传播
     def forward(self, x):
         return x + self.cv2(self.cv1(x)) if self.add else self.cv2(self.cv1(x))
 
@@ -135,6 +152,7 @@ class BottleneckCSP(nn.Module):
         self.act = nn.SiLU()
         self.m = nn.Sequential(*(Bottleneck(c_, c_, shortcut, g, e=1.0) for _ in range(n)))
 
+    # 前向传播
     def forward(self, x):
         y1 = self.cv3(self.m(self.cv1(x)))
         y2 = self.cv2(x)

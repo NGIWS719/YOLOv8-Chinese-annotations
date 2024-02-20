@@ -2,25 +2,26 @@
 """
 YOLO-specific modules
 
-Usage:
+使用方法:
     $ python models/yolo.py --cfg yolov5s.yaml
 """
-
+# 以下有些在其他脚本文件中已做出介绍
 import argparse
 import contextlib
 import os
 import platform
 import sys
-from copy import deepcopy
-from pathlib import Path
+from copy import deepcopy  # 可以创建对象的深拷贝
+from pathlib import Path  # 处理文件路径
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[1]  # YOLOv5 root directory
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
-if platform.system() != 'Windows':
-    ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
+if platform.system() != 'Windows':  # 判断当前系统是否是windows
+    ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # 将ROOT转换为相对路径
 
+# 系列导包
 from models.common import *
 from models.experimental import *
 from utils.autoanchor import check_anchor_order
@@ -30,37 +31,41 @@ from utils.torch_utils import (fuse_conv_and_bn, initialize_weights, model_info,
                                time_sync)
 
 try:
+    # 用于分析PyTorch模型的计算量和参数量
     import thop  # for FLOPs computation
 except ImportError:
     thop = None
 
 
+# YOLOv5的检测头部分
 class Detect(nn.Module):
     # YOLOv5 Detect head for detection models
-    stride = None  # strides computed during build
-    dynamic = False  # force grid reconstruction
-    export = False  # export mode
+    stride = None  # 构建模型时计算的步长
+    dynamic = False  # 是否强制重构网格
+    export = False  # 是否处于导出模式
 
     def __init__(self, nc=80, anchors=(), ch=(), inplace=True):  # detection layer
         super().__init__()
-        self.nc = nc  # number of classes
-        self.no = nc + 5  # number of outputs per anchor
-        self.nl = len(anchors)  # number of detection layers
-        self.na = len(anchors[0]) // 2  # number of anchors
-        self.grid = [torch.empty(0) for _ in range(self.nl)]  # init grid
-        self.anchor_grid = [torch.empty(0) for _ in range(self.nl)]  # init anchor grid
+        self.nc = nc  # 检测类别数
+        self.no = nc + 5  # 设置每个锚点的输出数，这里的5是由边界框的4个坐标和1个对象置信度组成的
+        self.nl = len(anchors)  # 检测层数量
+        self.na = len(anchors[0]) // 2  # 锚点的数量
+        self.grid = [torch.empty(0) for _ in range(self.nl)]  # 初始化网格
+        self.anchor_grid = [torch.empty(0) for _ in range(self.nl)]  # 初始化锚点网格
+        # 注册锚点
         self.register_buffer('anchors', torch.tensor(anchors).float().view(self.nl, -1, 2))  # shape(nl,na,2)
-        self.m = nn.ModuleList(nn.Conv2d(x, self.no * self.na, 1) for x in ch)  # output conv
+        self.m = nn.ModuleList(nn.Conv2d(x, self.no * self.na, 1) for x in ch)  # 创建输出卷积层
         self.inplace = inplace  # use inplace ops (e.g. slice assignment)
 
+    # 前向传播
     def forward(self, x):
-        z = []  # inference output
-        for i in range(self.nl):
+        z = []  # 推理输出
+        for i in range(self.nl):  # 遍历每一个检测层
             x[i] = self.m[i](x[i])  # conv
             bs, _, ny, nx = x[i].shape  # x(bs,255,20,20) to x(bs,3,20,20,85)
             x[i] = x[i].view(bs, self.na, self.no, ny, nx).permute(0, 1, 3, 4, 2).contiguous()
 
-            if not self.training:  # inference
+            if not self.training:  # 推理阶段
                 if self.dynamic or self.grid[i].shape[2:4] != x[i].shape[2:4]:
                     self.grid[i], self.anchor_grid[i] = self._make_grid(nx, ny, i)
 
@@ -297,20 +302,29 @@ class ClassificationModel(BaseModel):
 
 
 def parse_model(d, ch):  # model_dict, input_channels(3)
-    # Parse a YOLOv5 model.yaml dictionary
+    # 解析YOLOv5的.yaml模型文件，输入模型字典（yaml文件）和输入通道数
     LOGGER.info(f"\n{'':>3}{'from':>18}{'n':>3}{'params':>10}  {'module':<40}{'arguments':<30}")
+    # 从yaml文件中获取锚点，类别数，深度倍数，宽度倍数，激活函数
     anchors, nc, gd, gw, act = d['anchors'], d['nc'], d['depth_multiple'], d['width_multiple'], d.get('activation')
+    # 如果有激活函数
     if act:
+        # 将激活函数转换为对应的对象，并设置为默认的激活函数
         Conv.default_act = eval(act)  # redefine default activation, i.e. Conv.default_act = nn.SiLU()
         LOGGER.info(f"{colorstr('activation:')} {act}")  # print
+    # 如果anchors是一个列表，那么就计算锚点的数量，否则就直接使用anchors作为锚点的数量
     na = (len(anchors[0]) // 2) if isinstance(anchors, list) else anchors  # number of anchors
-    no = na * (nc + 5)  # number of outputs = anchors * (classes + 5)
-
+    # 每个锚点的输出数
+    no = na * (nc + 5)  # number of outputs = anchors * (classes + 5)  5是4个坐标加上一个置信度
+    # layers存储模型的所有层,save存储需要保存的层的索引,c2存储输出通道数,初始值是输入通道数列表ch的最后一个元素
     layers, save, c2 = [], [], ch[-1]  # layers, savelist, ch out
+    # 遍历backbone和head的每一层
     for i, (f, n, m, args) in enumerate(d['backbone'] + d['head']):  # from, number, module, args
+        # 如果module是字符串就转换成相应的对象
         m = eval(m) if isinstance(m, str) else m  # eval strings
+        # 遍历参数列表的每一个参数
         for j, a in enumerate(args):
             with contextlib.suppress(NameError):
+                # 如果遍历的参数是字符串就转换成int，并放到之前的列表位子
                 args[j] = eval(a) if isinstance(a, str) else a  # eval strings
 
         n = n_ = max(round(n * gd), 1) if n > 1 else n  # depth gain
